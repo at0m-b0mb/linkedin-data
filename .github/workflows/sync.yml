@@ -1,0 +1,42 @@
+name: Sync LinkedIn Experience
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'   # Every Monday 08:00 UTC
+  workflow_dispatch:        # Run manually from the Actions tab any time
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linkedin-api
+        run: pip install linkedin-api==2.*
+
+      - name: Fetch experience from LinkedIn
+        env:
+          LINKEDIN_LI_AT:   ${{ secrets.LINKEDIN_LI_AT }}
+          LINKEDIN_EMAIL:    ${{ secrets.LINKEDIN_EMAIL }}
+          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+        run: python scripts/sync_linkedin.py
+
+      - name: Commit and push experience.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet && echo "No changes." || (
+            git add experience.json
+            git commit -m "chore: sync LinkedIn experience [skip ci]"
+            git push
+          )
