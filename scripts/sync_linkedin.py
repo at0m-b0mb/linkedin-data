@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
 """
-Fetches experience data from LinkedIn and writes experience.json.
+Fetches experience data from LinkedIn's Voyager API and writes experience.json.
 
-Authentication (set as GitHub Actions secrets):
-  Recommended — LINKEDIN_LI_AT (session cookie, lasts ~1 year, no bot detection):
-    1. Log into linkedin.com in Chrome
-    2. DevTools → Application → Cookies → linkedin.com → copy "li_at" value
-    3. Add as GitHub secret: LINKEDIN_LI_AT
+Required GitHub secrets:
+  LINKEDIN_LI_AT      — main auth cookie  (li_at)
+  LINKEDIN_JSESSIONID — CSRF cookie       (JSESSIONID)
 
-  Fallback — LINKEDIN_EMAIL + LINKEDIN_PASSWORD
+How to get both cookies:
+  1. Log into linkedin.com in your browser
+  2. Open DevTools → Application → Cookies → https://www.linkedin.com
+  3. Copy the value of "li_at"      → LINKEDIN_LI_AT secret
+  4. Copy the value of "JSESSIONID" → LINKEDIN_JSESSIONID secret
+     (it looks like: ajax:1234567890ABCDEF — copy WITHOUT surrounding quotes)
 """
 
 import json
 import os
+import re
 import sys
 
 try:
-    from linkedin_api import Linkedin
+    import requests
 except ImportError:
-    print("ERROR: linkedin-api not installed.")
+    print("ERROR: requests not installed.")
     sys.exit(1)
 
-PROFILE_ID = "kailash-parshad"
+PROFILE_ID  = "kailash-parshad"
 OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "..", "experience.json")
 
 MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
@@ -41,44 +45,63 @@ def fmt_period(tp):
 
 
 def clean(text):
-    import re
     if not text:
         return ""
     return re.sub(r"\s+", " ", text).strip()
 
 
-def connect():
-    li_at = os.environ.get("LINKEDIN_LI_AT")
-    if li_at:
-        print("Authenticating via li_at cookie...")
-        api = Linkedin("", "", authenticate=False)
-        api.client.session.cookies.set("li_at", li_at, domain=".linkedin.com")
-        api.client.session.headers.update({"csrf-token": "ajax:0"})
-        return api
+def fetch_positions(li_at, jsessionid):
+    # Strip quotes that some browsers include around JSESSIONID
+    csrf = jsessionid.strip('"').strip("'")
 
-    email    = os.environ.get("LINKEDIN_EMAIL")
-    password = os.environ.get("LINKEDIN_PASSWORD")
-    if email and password:
-        print("Authenticating via email/password...")
-        return Linkedin(email, password)
+    session = requests.Session()
+    session.cookies.set("li_at",      li_at,    domain=".linkedin.com")
+    session.cookies.set("JSESSIONID", f'"{csrf}"', domain=".linkedin.com")
 
-    print("ERROR: No credentials. Set LINKEDIN_LI_AT or LINKEDIN_EMAIL + LINKEDIN_PASSWORD.")
-    sys.exit(1)
+    session.headers.update({
+        "csrf-token":                  csrf,
+        "x-restli-protocol-version":  "2.0.0",
+        "x-li-lang":                  "en_US",
+        "x-li-track":                 '{"clientVersion":"1.13.9"}',
+        "user-agent":                  (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        ),
+        "accept":                      "application/vnd.linkedin.normalized+json+2.1",
+    })
 
+    url = (
+        f"https://www.linkedin.com/voyager/api/identity/profiles"
+        f"/{PROFILE_ID}/positions?count=100&start=0"
+    )
+    res = session.get(url)
 
-def main():
-    api = connect()
-
-    print(f"Fetching profile: {PROFILE_ID}")
-    profile   = api.get_profile(PROFILE_ID)
-    positions = profile.get("experience", [])
-
-    if not positions:
-        print("No experience data returned. Check credentials and profile ID.")
+    if res.status_code == 401:
+        print("ERROR: 401 Unauthorized — your li_at or JSESSIONID may have expired. Re-copy them from the browser.")
+        sys.exit(1)
+    if res.status_code == 403:
+        print("ERROR: 403 Forbidden — CSRF check failed. Make sure LINKEDIN_JSESSIONID is set correctly (no outer quotes).")
+        sys.exit(1)
+    if not res.ok:
+        print(f"ERROR: LinkedIn returned HTTP {res.status_code}")
+        print(res.text[:500])
         sys.exit(1)
 
+    try:
+        return res.json()
+    except Exception:
+        print("ERROR: Could not parse LinkedIn response as JSON.")
+        print("First 500 chars:", res.text[:500])
+        sys.exit(1)
+
+
+def parse_entries(data):
+    # Voyager API wraps results under 'elements' or a nested included list
+    elements = data.get("elements", [])
+
     entries = []
-    for pos in positions:
+    for pos in elements:
         title   = clean(pos.get("title", ""))
         company = clean(pos.get("companyName", ""))
         desc    = clean(pos.get("description", ""))
@@ -91,18 +114,37 @@ def main():
             "date":        date,
             "title":       title,
             "company":     company,
-            "description": desc
+            "description": desc,
         })
 
+    return entries
+
+
+def main():
+    li_at      = os.environ.get("LINKEDIN_LI_AT", "").strip()
+    jsessionid = os.environ.get("LINKEDIN_JSESSIONID", "").strip()
+
+    if not li_at:
+        print("ERROR: LINKEDIN_LI_AT secret is not set.")
+        sys.exit(1)
+    if not jsessionid:
+        print("ERROR: LINKEDIN_JSESSIONID secret is not set.")
+        sys.exit(1)
+
+    print(f"Fetching positions for: {PROFILE_ID}")
+    data    = fetch_positions(li_at, jsessionid)
+    entries = parse_entries(data)
+
     if not entries:
-        print("All positions were empty after parsing.")
+        print("No experience entries found in API response.")
+        print("Raw keys:", list(data.keys()))
         sys.exit(1)
 
     out_path = os.path.normpath(OUTPUT_FILE)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
-    print(f"Written {len(entries)} entries to {out_path}")
+    print(f"Written {len(entries)} entries to experience.json")
 
 
 if __name__ == "__main__":
