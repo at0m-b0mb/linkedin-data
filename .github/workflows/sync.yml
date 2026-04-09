@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install dependencies
+        run: pip install requests
+
       - name: Fetch experience from LinkedIn
         env:
           LINKEDIN_LI_AT:      ${{ secrets.LINKEDIN_LI_AT }}
