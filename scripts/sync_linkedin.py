@@ -2,11 +2,12 @@
 """
 Fetches experience data from LinkedIn and writes experience.json.
 
-Required GitHub secrets:
+Required GitHub secrets (Settings → Secrets and variables → Actions):
   LINKEDIN_EMAIL    — your LinkedIn login email
   LINKEDIN_PASSWORD — your LinkedIn login password
 
-The linkedin-api library handles authentication and uses current endpoints.
+If either secret is absent the script exits 0 (skip) so the workflow
+stays green until credentials are configured.
 """
 
 import json
@@ -50,8 +51,9 @@ def main():
     password = os.environ.get("LINKEDIN_PASSWORD", "").strip()
 
     if not email or not password:
-        print("ERROR: LINKEDIN_EMAIL and LINKEDIN_PASSWORD secrets must be set.")
-        sys.exit(1)
+        print("SKIP: LINKEDIN_EMAIL and/or LINKEDIN_PASSWORD secrets are not configured.")
+        print("Add them under Settings → Secrets and variables → Actions, then re-run.")
+        sys.exit(0)
 
     print("Authenticating with LinkedIn...")
     try:
