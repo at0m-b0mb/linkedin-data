@@ -26,6 +26,7 @@ jobs:
 
       - name: Fetch experience from LinkedIn
         env:
+          LINKEDIN_COOKIE:   ${{ secrets.LINKEDIN_COOKIE }}
           LINKEDIN_EMAIL:    ${{ secrets.LINKEDIN_EMAIL }}
           LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
         run: python scripts/sync_linkedin.py

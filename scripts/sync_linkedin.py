@@ -2,11 +2,21 @@
 """
 Fetches experience data from LinkedIn and writes experience.json.
 
-Required GitHub secrets:
-  LINKEDIN_EMAIL    — your LinkedIn login email
-  LINKEDIN_PASSWORD — your LinkedIn login password
+Authentication — choose ONE of the following GitHub secrets:
 
-The linkedin-api library handles authentication and uses current endpoints.
+  Option A (recommended — works with passkey accounts):
+    LINKEDIN_COOKIE   — value of the `li_at` cookie from your browser session.
+                        How to get it:
+                          1. Log in to linkedin.com in your browser.
+                          2. Open DevTools → Application → Cookies → linkedin.com
+                          3. Copy the value of the cookie named  li_at
+                          4. Paste it as the LINKEDIN_COOKIE repository secret.
+
+  Option B (legacy — email + password):
+    LINKEDIN_EMAIL    — your LinkedIn login email
+    LINKEDIN_PASSWORD — your LinkedIn login password
+
+Option A is tried first; Option B is used only if LINKEDIN_COOKIE is absent.
 """
 
 import json
@@ -15,6 +25,7 @@ import re
 import sys
 
 try:
+    import requests
     from linkedin_api import Linkedin
 except ImportError:
     print("ERROR: linkedin-api not installed. Run: pip install linkedin-api")
@@ -46,19 +57,33 @@ def clean(text):
 
 
 def main():
+    cookie   = os.environ.get("LINKEDIN_COOKIE", "").strip()
     email    = os.environ.get("LINKEDIN_EMAIL", "").strip()
     password = os.environ.get("LINKEDIN_PASSWORD", "").strip()
 
-    if not email or not password:
-        print("ERROR: LINKEDIN_EMAIL and LINKEDIN_PASSWORD secrets must be set.")
+    if not cookie and not (email and password):
+        print(
+            "ERROR: Provide either the LINKEDIN_COOKIE secret (recommended)\n"
+            "       or both LINKEDIN_EMAIL and LINKEDIN_PASSWORD secrets."
+        )
         sys.exit(1)
 
     print("Authenticating with LinkedIn...")
     try:
-        api = Linkedin(email, password)
+        if cookie:
+            print("Using session-cookie (li_at) authentication.")
+            jar = requests.cookies.RequestsCookieJar()
+            jar.set("li_at", cookie, domain=".linkedin.com", path="/")
+            api = Linkedin("", "", authenticate=False, cookies=jar)
+        else:
+            print("Using email/password authentication.")
+            api = Linkedin(email, password)
     except Exception as e:
         print(f"ERROR: Authentication failed — {e}")
-        print("Check your email/password secrets are correct.")
+        if cookie:
+            print("Check that your LINKEDIN_COOKIE (li_at) value is current and not expired.")
+        else:
+            print("Check your LINKEDIN_EMAIL and LINKEDIN_PASSWORD secrets are correct.")
         sys.exit(1)
 
     print(f"Fetching profile: {PROFILE_ID}")
